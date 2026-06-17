@@ -34,10 +34,19 @@ interface OtsIndex {
 	entries: TimestampEntry[];
 }
 
+interface OtsSettings {
+	autoTimestampDelay: number; // seconds
+}
+
+const DEFAULT_SETTINGS: OtsSettings = {
+	autoTimestampDelay: 120,
+};
+
 export default class OtsPlugin extends Plugin {
-	private autoTimestampDelay = 3000;
+	settings: OtsSettings;
 
 	async onload() {
+		await this.loadSettings();
 		this.ensureOtsDir();
 
 		// Auto-timestamp on file create
@@ -45,7 +54,7 @@ export default class OtsPlugin extends Plugin {
 			this.app.vault.on("create", (file: TAbstractFile) => {
 				if (!(file instanceof TFile)) return;
 				if (this.isOtsPath(file.path)) return;
-				setTimeout(() => this.timestampFile(file, false), this.autoTimestampDelay);
+				setTimeout(() => this.timestampFile(file, false), this.settings.autoTimestampDelay * 1000);
 			})
 		);
 
@@ -102,6 +111,14 @@ export default class OtsPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new OtsSettingTab(this.app, this));
+	}
+
+	async loadSettings() {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
 	}
 
 	private isOtsPath(path: string): boolean {
@@ -416,5 +433,30 @@ class OtsSettingTab extends PluginSettingTab {
 			.setName("Auto-timestamp new files")
 			.setDesc("Automatically submit newly created files to OTS calendars.")
 			.addToggle((toggle) => toggle.setValue(true).setDisabled(true));
+
+		let delayLabel: HTMLSpanElement;
+		new Setting(containerEl)
+			.setName("Auto-timestamp delay")
+			.setDesc(
+				"How long to wait after a new file is created before submitting it. " +
+				"A longer delay avoids stamping files you create and immediately delete."
+			)
+			.addSlider((slider) => {
+				slider
+					.setLimits(60, 300, 30)
+					.setValue(this.plugin.settings.autoTimestampDelay)
+					.onChange(async (value) => {
+						this.plugin.settings.autoTimestampDelay = value;
+						await this.plugin.saveSettings();
+						delayLabel.setText(`${value}s`);
+					});
+				delayLabel = slider.sliderEl.insertAdjacentElement(
+					"afterend",
+					createSpan({ text: `${this.plugin.settings.autoTimestampDelay}s` })
+				) as HTMLSpanElement;
+				delayLabel.style.marginLeft = "10px";
+				delayLabel.style.minWidth = "36px";
+				delayLabel.style.display = "inline-block";
+			});
 	}
 }

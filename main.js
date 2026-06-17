@@ -76557,12 +76557,12 @@ var OTS_DIR = "_ots";
 var PROOFS_DIR = `${OTS_DIR}/proofs`;
 var INDEX_FILE = `${OTS_DIR}/timestamps.json`;
 var LOG_FILE = `${OTS_DIR}/README.md`;
+var DEFAULT_SETTINGS = {
+  autoTimestampDelay: 120
+};
 var OtsPlugin = class extends import_obsidian.Plugin {
-  constructor() {
-    super(...arguments);
-    this.autoTimestampDelay = 3e3;
-  }
   async onload() {
+    await this.loadSettings();
     this.ensureOtsDir();
     this.registerEvent(
       this.app.vault.on("create", (file) => {
@@ -76570,7 +76570,7 @@ var OtsPlugin = class extends import_obsidian.Plugin {
           return;
         if (this.isOtsPath(file.path))
           return;
-        setTimeout(() => this.timestampFile(file, false), this.autoTimestampDelay);
+        setTimeout(() => this.timestampFile(file, false), this.settings.autoTimestampDelay * 1e3);
       })
     );
     this.registerEvent(
@@ -76614,6 +76614,12 @@ var OtsPlugin = class extends import_obsidian.Plugin {
       callback: () => this.upgradeAllProofs()
     });
     this.addSettingTab(new OtsSettingTab(this.app, this));
+  }
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
   isOtsPath(path) {
     return path.startsWith(OTS_DIR + "/");
@@ -76842,6 +76848,23 @@ var OtsSettingTab = class extends import_obsidian.PluginSettingTab {
       (text) => text.setPlaceholder("_ots").setValue(OTS_DIR).setDisabled(true)
     );
     new import_obsidian.Setting(containerEl).setName("Auto-timestamp new files").setDesc("Automatically submit newly created files to OTS calendars.").addToggle((toggle) => toggle.setValue(true).setDisabled(true));
+    let delayLabel;
+    new import_obsidian.Setting(containerEl).setName("Auto-timestamp delay").setDesc(
+      "How long to wait after a new file is created before submitting it. A longer delay avoids stamping files you create and immediately delete."
+    ).addSlider((slider) => {
+      slider.setLimits(60, 300, 30).setValue(this.plugin.settings.autoTimestampDelay).onChange(async (value) => {
+        this.plugin.settings.autoTimestampDelay = value;
+        await this.plugin.saveSettings();
+        delayLabel.setText(`${value}s`);
+      });
+      delayLabel = slider.sliderEl.insertAdjacentElement(
+        "afterend",
+        createSpan({ text: `${this.plugin.settings.autoTimestampDelay}s` })
+      );
+      delayLabel.style.marginLeft = "10px";
+      delayLabel.style.minWidth = "36px";
+      delayLabel.style.display = "inline-block";
+    });
   }
 };
 /*! Bundled license information:

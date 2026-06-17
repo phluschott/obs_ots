@@ -51,12 +51,17 @@ export default class OtsPlugin extends Plugin {
 
 		// Status bar button
 		this.statusBarItem = this.addStatusBarItem();
-		this.statusBarItem.title = "Click to timestamp the active file";
 		this.statusBarItem.style.cursor = "pointer";
-		this.statusBarItem.addEventListener("click", () => {
-			const file = this.app.workspace.getActiveFile();
-			if (file) this.timestampFile(file, true);
-			else new Notice("No active file to timestamp.");
+		this.statusBarItem.addEventListener("click", async () => {
+			const index = await this.loadIndex();
+			const pending = index.entries.filter((e) => e.status !== "confirmed").length;
+			if (pending > 0) {
+				this.upgradeAllProofs();
+			} else {
+				const file = this.app.workspace.getActiveFile();
+				if (file) this.timestampFile(file, true);
+				else new Notice("No active file to timestamp.");
+			}
 		});
 		await this.refreshStatusBar();
 
@@ -131,7 +136,7 @@ export default class OtsPlugin extends Plugin {
 		const pending = index.entries.filter((e) => e.status !== "confirmed").length;
 		if (pending > 0) {
 			this.statusBarItem.setText(`⏱ OTS · ${pending} pending`);
-			this.statusBarItem.title = `${pending} proof(s) awaiting Bitcoin confirmation — click to timestamp active file`;
+			this.statusBarItem.title = `Click to check for Bitcoin confirmations (${pending} pending)`;
 		} else {
 			this.statusBarItem.setText("⏱ OTS");
 			this.statusBarItem.title = "Click to timestamp the active file";

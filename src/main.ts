@@ -126,14 +126,18 @@ export default class OtsPlugin extends Plugin {
 
 	setFolderVisibility(hide: boolean) {
 		const config = (this.app.vault as any).config;
-		let filters: string[] = config.userIgnoreFilters ?? [];
+		let filters: string[] = Array.isArray(config.userIgnoreFilters) ? [...config.userIgnoreFilters] : [];
 		if (hide) {
-			if (!filters.includes(OTS_DIR)) filters = [...filters, OTS_DIR];
+			if (!filters.includes(OTS_DIR)) filters.push(OTS_DIR);
 		} else {
 			filters = filters.filter((f: string) => f !== OTS_DIR);
 		}
 		(this.app.vault as any).setConfig("userIgnoreFilters", filters);
-		(this.app as any).fileManager.initializeIgnoreFilters?.();
+
+		// Refresh the file explorer so the change takes effect immediately
+		for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+			(leaf.view as any).requestSort?.();
+		}
 	}
 
 	private isOtsPath(path: string): boolean {

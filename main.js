@@ -76563,17 +76563,18 @@ var OtsPlugin = class extends import_obsidian.Plugin {
   async onload() {
     await this.loadSettings();
     this.ensureOtsDir();
-    const statusBarItem = this.addStatusBarItem();
-    statusBarItem.setText("\u23F1 OTS");
-    statusBarItem.title = "Timestamp this file with OpenTimestamps";
-    statusBarItem.style.cursor = "pointer";
-    statusBarItem.addEventListener("click", () => {
+    this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.title = "Click to timestamp the active file";
+    this.statusBarItem.style.cursor = "pointer";
+    this.statusBarItem.addEventListener("click", () => {
       const file = this.app.workspace.getActiveFile();
       if (file)
         this.timestampFile(file, true);
       else
         new import_obsidian.Notice("No active file to timestamp.");
     });
+    await this.refreshStatusBar();
+    this.app.workspace.onLayoutReady(() => this.startupUpgradeCheck());
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof import_obsidian.TFile))
@@ -76622,6 +76623,34 @@ var OtsPlugin = class extends import_obsidian.Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
   }
+  async refreshStatusBar() {
+    const index = await this.loadIndex();
+    const pending = index.entries.filter((e) => e.status !== "confirmed").length;
+    if (pending > 0) {
+      this.statusBarItem.setText(`\u23F1 OTS \xB7 ${pending} pending`);
+      this.statusBarItem.title = `${pending} proof(s) awaiting Bitcoin confirmation \u2014 click to timestamp active file`;
+    } else {
+      this.statusBarItem.setText("\u23F1 OTS");
+      this.statusBarItem.title = "Click to timestamp the active file";
+    }
+  }
+  async startupUpgradeCheck() {
+    const index = await this.loadIndex();
+    const pendingCount = index.entries.filter((e) => e.status !== "confirmed").length;
+    if (pendingCount === 0)
+      return;
+    const upgraded = await this.upgradeAllProofs(true);
+    const stillPending = pendingCount - upgraded;
+    if (upgraded > 0) {
+      new import_obsidian.Notice(`\u2705 OTS: ${upgraded} proof${upgraded > 1 ? "s" : ""} confirmed on Bitcoin!`);
+    }
+    if (stillPending > 0) {
+      new import_obsidian.Notice(
+        `\u23F3 OTS: ${stillPending} proof${stillPending > 1 ? "s are" : " is"} still pending Bitcoin confirmation. Run "Upgrade pending OTS proofs" from the command palette to check again.`,
+        8e3
+      );
+    }
+  }
   isOtsPath(path) {
     return path.startsWith(OTS_DIR + "/") || path === LOG_FILE;
   }
@@ -76667,6 +76696,7 @@ var OtsPlugin = class extends import_obsidian.Plugin {
       };
       await this.addIndexEntry(entry);
       await this.regenerateLog();
+      await this.refreshStatusBar();
       if (notify)
         new import_obsidian.Notice(`\u2713 Timestamped: ${file.name} (pending Bitcoin anchor)`);
       return true;
@@ -76677,7 +76707,7 @@ var OtsPlugin = class extends import_obsidian.Plugin {
       return false;
     }
   }
-  async upgradeAllProofs() {
+  async upgradeAllProofs(silent = false) {
     const index = await this.loadIndex();
     let upgraded = 0;
     for (const entry of index.entries) {
@@ -76700,7 +76730,10 @@ var OtsPlugin = class extends import_obsidian.Plugin {
     }
     await this.saveIndex(index);
     await this.regenerateLog();
-    new import_obsidian.Notice(`Upgraded ${upgraded} proof(s) to confirmed.`);
+    await this.refreshStatusBar();
+    if (!silent)
+      new import_obsidian.Notice(`Upgraded ${upgraded} proof(s) to confirmed.`);
+    return upgraded;
   }
   async loadIndex() {
     try {

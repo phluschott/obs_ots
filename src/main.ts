@@ -239,13 +239,36 @@ export default class OtsPlugin extends Plugin {
 |------|-----------------|-----------|--------|
 ${rows}
 
-## How to verify
+---
+
+## How to verify your proof
+
+Each \`.ots\` file in the \`proofs/\` folder is a cryptographic proof that your file existed at a specific point in time, anchored to the Bitcoin blockchain.
+
+### Option 1 — Web (no install required)
+
+1. Go to **https://opentimestamps.org/**
+2. Drag and drop the \`.ots\` proof file from the \`proofs/\` folder onto the page
+3. The site will show whether the proof is pending or confirmed, and if confirmed, which Bitcoin block it was anchored to
+
+### Option 2 — Command line
 
 \`\`\`
-ots verify <prooffile>.ots
+pip install opentimestamps-client
+ots verify _ots/proofs/<yourfile>.ots
 \`\`\`
 
-Install the OTS CLI: \`pip install opentimestamps-client\`
+---
+
+## How verification proves existence
+
+When you timestamped a file, only its **SHA-256 hash** — a unique fingerprint of the file's exact contents — was submitted to the OpenTimestamps servers. Your actual file never left your computer.
+
+The servers bundled that hash into a Merkle tree (a tamper-proof chain of hashes) and recorded the root of that tree in a Bitcoin transaction. Once mined into a block, that record is permanent and immutable.
+
+When you verify later, the \`.ots\` proof file mathematically demonstrates that your file's hash was included in that Bitcoin block. Since Bitcoin blocks are timestamped and irreversible, this proves your file existed **before that block was mined** — without trusting any central authority.
+
+Anyone can repeat this verification independently using nothing but the \`.ots\` file, your original file, and the public Bitcoin blockchain.
 `;
 		await this.app.vault.adapter.write(LOG_FILE, md);
 	}

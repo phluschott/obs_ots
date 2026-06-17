@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-ots",
+  "name": "OpenTimestamps",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Timestamp your notes on Bitcoin via OpenTimestamps to prove existence and protect your IP.",
+  "author": "phluschott",
+  "authorUrl": "https://github.com/phluschott",
+  "isDesktopOnly": false
+}

@@ -44,23 +44,31 @@ const DEFAULT_SETTINGS: OtsSettings = {};
 export default class OtsPlugin extends Plugin {
 	settings: OtsSettings;
 	private statusBarItem: HTMLElement;
+	private updateBarItem: HTMLElement;
 
 	async onload() {
 		await this.loadSettings();
 		this.ensureOtsDir();
 
-		// Status bar button
+		// Status bar — Sign This File
 		this.statusBarItem = this.addStatusBarItem();
+		this.statusBarItem.setText("✍ Sign This File");
+		this.statusBarItem.title = "Timestamp the active file with OpenTimestamps";
 		this.statusBarItem.style.cursor = "pointer";
-		this.statusBarItem.addEventListener("click", async () => {
-			const index = await this.loadIndex();
-			const pending = index.entries.filter((e) => e.status !== "confirmed").length;
-			if (pending > 0) {
-				this.upgradeAllProofs();
-			} else {
-				const file = this.app.workspace.getActiveFile();
-				if (file) this.timestampFile(file, true);
-				else new Notice("No active file to timestamp.");
+		this.statusBarItem.addEventListener("click", () => {
+			const file = this.app.workspace.getActiveFile();
+			if (file) this.timestampFile(file, true);
+			else new Notice("No active file to timestamp.");
+		});
+
+		// Status bar — Update Timestamp Log
+		this.updateBarItem = this.addStatusBarItem();
+		updateBarItem.style.cursor = "pointer";
+		updateBarItem.addEventListener("click", async () => {
+			await this.upgradeAllProofs();
+			const log = this.app.vault.getAbstractFileByPath(LOG_FILE);
+			if (log instanceof TFile) {
+				await this.app.workspace.getLeaf().openFile(log);
 			}
 		});
 		await this.refreshStatusBar();
@@ -135,11 +143,11 @@ export default class OtsPlugin extends Plugin {
 		const index = await this.loadIndex();
 		const pending = index.entries.filter((e) => e.status !== "confirmed").length;
 		if (pending > 0) {
-			this.statusBarItem.setText(`⏱ OTS · ${pending} pending`);
-			this.statusBarItem.title = `Click to check for Bitcoin confirmations (${pending} pending)`;
+			this.updateBarItem.setText(`🔄 Update Timestamp Log · ${pending} pending`);
+			this.updateBarItem.title = `Check for Bitcoin confirmations (${pending} proofs pending)`;
 		} else {
-			this.statusBarItem.setText("⏱ OTS");
-			this.statusBarItem.title = "Click to timestamp the active file";
+			this.updateBarItem.setText("🔄 Update Timestamp Log");
+			this.updateBarItem.title = "Check for Bitcoin confirmations and open the OTS Log";
 		}
 	}
 

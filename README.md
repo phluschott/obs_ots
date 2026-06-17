@@ -116,19 +116,26 @@ Once confirmed, the proof will show the Bitcoin block number it was anchored to.
 
 ## What gets stored in your vault
 
-The plugin creates a `_ots/` folder in your vault:
+The plugin keeps everything organised into two places:
+
+### OTS Log.md — visible in your vault
+
+A note called **OTS Log.md** is created at the root of your vault. This is your human-readable record — it lists every timestamped file, its submission date, and its current status (pending or confirmed with a Bitcoin block number and link). You can open it any time from the file explorer like any other note.
+
+### .ots/ — hidden folder
+
+All proof files and the machine-readable index are stored in a hidden `.ots/` folder. Folders that start with a dot are hidden from the Obsidian sidebar automatically — you won't see it cluttering your file explorer. However, you can still access it through your operating system's file manager (you may need to enable "show hidden files" in your OS settings).
 
 ```
-_ots/
-  README          ← auto-updated log of every timestamped file
-  timestamps.json ← machine-readable index of all proofs
-  proofs/
-    Chapter_1.md.ots   ← proof file for each timestamped note
-    Chapter_2.md.ots
-    My_Research.md.ots
+Your Vault/
+  OTS Log.md          ← visible in Obsidian sidebar
+  .ots/               ← hidden from sidebar, visible in OS file manager
+    timestamps.json   ← machine-readable proof index
+    proofs/
+      Chapter_1.md.ots
+      Chapter_2.md.ots
+      My_Research.md.ots
 ```
-
-The `README` inside `_ots/` lists every file, its submission date, and its current status (pending or confirmed with a Bitcoin block number).
 
 > Do not manually edit `timestamps.json` or the `.ots` files — they are binary cryptographic proofs.
 
@@ -139,14 +146,14 @@ The `README` inside `_ots/` lists every file, its submission date, and its curre
 ### Option 1 — Web (no install required)
 
 1. Go to **https://opentimestamps.org/**
-2. Drag and drop any `.ots` file from your `_ots/proofs/` folder onto the page
+2. Drag and drop any `.ots` file from your `.ots/proofs/` folder onto the page
 3. The site will confirm whether the proof is pending or anchored, and show the Bitcoin block number if confirmed
 
 ### Option 2 — Command line
 
 ```bash
 pip install opentimestamps-client
-ots verify _ots/proofs/Chapter_1.md.ots
+ots verify .ots/proofs/Chapter_1.md.ots
 ```
 
 ---

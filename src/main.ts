@@ -36,12 +36,10 @@ interface OtsIndex {
 
 interface OtsSettings {
 	autoTimestampDelay: number; // seconds
-	hideOtsFolder: boolean;
 }
 
 const DEFAULT_SETTINGS: OtsSettings = {
 	autoTimestampDelay: 120,
-	hideOtsFolder: false,
 };
 
 export default class OtsPlugin extends Plugin {
@@ -49,7 +47,6 @@ export default class OtsPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
-		this.setFolderVisibility(this.settings.hideOtsFolder);
 		this.ensureOtsDir();
 
 		// Auto-timestamp on file create
@@ -124,23 +121,7 @@ export default class OtsPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	setFolderVisibility(hide: boolean) {
-		const config = (this.app.vault as any).config;
-		let filters: string[] = Array.isArray(config.userIgnoreFilters) ? [...config.userIgnoreFilters] : [];
-		if (hide) {
-			if (!filters.includes(OTS_DIR)) filters.push(OTS_DIR);
-		} else {
-			filters = filters.filter((f: string) => f !== OTS_DIR);
-		}
-		(this.app.vault as any).setConfig("userIgnoreFilters", filters);
-
-		// Refresh the file explorer so the change takes effect immediately
-		for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
-			(leaf.view as any).requestSort?.();
-		}
-	}
-
-	private isOtsPath(path: string): boolean {
+private isOtsPath(path: string): boolean {
 		return path.startsWith(OTS_DIR + "/");
 	}
 
@@ -520,17 +501,5 @@ class OtsSettingTab extends PluginSettingTab {
 				delayLabel.style.display = "inline-block";
 			});
 
-		new Setting(containerEl)
-			.setName("Hide _ots folder in sidebar")
-			.setDesc("Exclude the proof storage folder from the file explorer. The folder and its files still exist — they just won't be shown.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.hideOtsFolder)
-					.onChange(async (value) => {
-						this.plugin.settings.hideOtsFolder = value;
-						await this.plugin.saveSettings();
-						this.plugin.setFolderVisibility(value);
-					})
-			);
 	}
 }

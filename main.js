@@ -76558,13 +76558,11 @@ var PROOFS_DIR = `${OTS_DIR}/proofs`;
 var INDEX_FILE = `${OTS_DIR}/timestamps.json`;
 var LOG_FILE = `${OTS_DIR}/README.md`;
 var DEFAULT_SETTINGS = {
-  autoTimestampDelay: 120,
-  hideOtsFolder: false
+  autoTimestampDelay: 120
 };
 var OtsPlugin = class extends import_obsidian.Plugin {
   async onload() {
     await this.loadSettings();
-    this.setFolderVisibility(this.settings.hideOtsFolder);
     this.ensureOtsDir();
     this.registerEvent(
       this.app.vault.on("create", (file) => {
@@ -76622,21 +76620,6 @@ var OtsPlugin = class extends import_obsidian.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
-  }
-  setFolderVisibility(hide) {
-    var _a, _b;
-    const config = this.app.vault.config;
-    let filters = Array.isArray(config.userIgnoreFilters) ? [...config.userIgnoreFilters] : [];
-    if (hide) {
-      if (!filters.includes(OTS_DIR))
-        filters.push(OTS_DIR);
-    } else {
-      filters = filters.filter((f) => f !== OTS_DIR);
-    }
-    this.app.vault.setConfig("userIgnoreFilters", filters);
-    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
-      (_b = (_a = leaf.view).requestSort) == null ? void 0 : _b.call(_a);
-    }
   }
   isOtsPath(path) {
     return path.startsWith(OTS_DIR + "/");
@@ -76910,13 +76893,6 @@ var OtsSettingTab = class extends import_obsidian.PluginSettingTab {
       delayLabel.style.minWidth = "36px";
       delayLabel.style.display = "inline-block";
     });
-    new import_obsidian.Setting(containerEl).setName("Hide _ots folder in sidebar").setDesc("Exclude the proof storage folder from the file explorer. The folder and its files still exist \u2014 they just won't be shown.").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.hideOtsFolder).onChange(async (value) => {
-        this.plugin.settings.hideOtsFolder = value;
-        await this.plugin.saveSettings();
-        this.plugin.setFolderVisibility(value);
-      })
-    );
   }
 };
 /*! Bundled license information:

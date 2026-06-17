@@ -76106,7 +76106,7 @@ var require_open_timestamps = __commonJS({
     var Timestamp = require_timestamp();
     var Utils = require_utils2();
     var Ops2 = require_ops();
-    var Calendar2 = require_calendar();
+    var Calendar = require_calendar();
     var Notary = require_notary();
     var Esplora = require_esplora();
     var Merkle = require_merkle();
@@ -76217,7 +76217,7 @@ var require_open_timestamps = __commonJS({
         } else {
           options.privateCalendars = [];
           if (!options.calendars || options.calendars.length === 0) {
-            options.calendars = Calendar2.DEFAULT_AGGREGATORS;
+            options.calendars = Calendar.DEFAULT_AGGREGATORS;
           }
           if (!options.m || options.m === 0) {
             options.m = 1;
@@ -76249,14 +76249,14 @@ var require_open_timestamps = __commonJS({
         const res = [];
         if (calendars) {
           calendars.forEach((calendar) => {
-            const remote = new Calendar2.RemoteCalendar(calendar);
+            const remote = new Calendar.RemoteCalendar(calendar);
             res.push(remote.submit(timestamp.msg));
             console.log("Submitting to remote calendar " + calendar);
           });
         }
         if (privateCalendars) {
           privateCalendars.forEach((key, calendar) => {
-            const remote = new Calendar2.RemoteCalendar(calendar);
+            const remote = new Calendar.RemoteCalendar(calendar);
             remote.setKey(key);
             res.push(remote.submit(timestamp.msg));
             console.log("Submitting to remote calendar " + calendar);
@@ -76461,7 +76461,7 @@ var require_open_timestamps = __commonJS({
           options = {};
         }
         if (!options.whitelist) {
-          options.whitelist = Calendar2.DEFAULT_CALENDAR_WHITELIST;
+          options.whitelist = Calendar.DEFAULT_CALENDAR_WHITELIST;
         }
         timestamp.directlyVerified().forEach((subStamp) => {
           subStamp.attestations.forEach((attestation) => {
@@ -76482,7 +76482,7 @@ var require_open_timestamps = __commonJS({
               }
               const commitment = subStamp.msg;
               calendars.forEach((calendarUrl) => {
-                const calendar = new Calendar2.RemoteCalendar(calendarUrl);
+                const calendar = new Calendar.RemoteCalendar(calendarUrl);
                 promises.push(self2.upgradeStamp(subStamp, calendar, commitment, existingAttestations));
               });
             }
@@ -76557,11 +76557,6 @@ var OTS_DIR = "_ots";
 var PROOFS_DIR = `${OTS_DIR}/proofs`;
 var INDEX_FILE = `${OTS_DIR}/timestamps.json`;
 var LOG_FILE = `${OTS_DIR}/README.md`;
-var CALENDARS = [
-  "https://alice.btc.calendar.opentimestamps.org",
-  "https://bob.btc.calendar.opentimestamps.org",
-  "https://finney.calendar.eternitywall.com"
-];
 var OtsPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
@@ -76640,14 +76635,12 @@ var OtsPlugin = class extends import_obsidian.Plugin {
       const sha256 = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
       if (notify)
         new import_obsidian.Notice(`Submitting ${file.name} to OTS calendars\u2026`);
-      const hash = OpenTimestamps.Ops.OpSHA256.hashToBytes ? OpenTimestamps.Ops.OpSHA256.hashToBytes(sha256) : Buffer.from(sha256, "hex");
-      const detached = OpenTimestamps.DetachedTimestampFile.fromBytes(
+      const hashBytes = Buffer.from(sha256, "hex");
+      const detached = OpenTimestamps.DetachedTimestampFile.fromHash(
         new OpenTimestamps.Ops.OpSHA256(),
-        hash
+        hashBytes
       );
-      await OpenTimestamps.stamp(detached, {
-        calendars: CALENDARS.map((url) => new OpenTimestamps.Calendar(url))
-      });
+      await OpenTimestamps.stamp(detached);
       const otsBytes = detached.serializeToBytes();
       const safeName = file.path.replace(/\//g, "_");
       const proofPath = `${PROOFS_DIR}/${safeName}.ots`;

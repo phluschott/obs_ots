@@ -20,11 +20,6 @@ const PROOFS_DIR = `${OTS_DIR}/proofs`;
 const INDEX_FILE = `${OTS_DIR}/timestamps.json`;
 const LOG_FILE = `${OTS_DIR}/README.md`;
 
-const CALENDARS = [
-	"https://alice.btc.calendar.opentimestamps.org",
-	"https://bob.btc.calendar.opentimestamps.org",
-	"https://finney.calendar.eternitywall.com",
-];
 
 interface TimestampEntry {
 	file: string;
@@ -138,19 +133,15 @@ export default class OtsPlugin extends Plugin {
 
 			if (notify) new Notice(`Submitting ${file.name} to OTS calendars…`);
 
-			// Build OTS stamp
-			const hash = OpenTimestamps.Ops.OpSHA256.hashToBytes
-				? OpenTimestamps.Ops.OpSHA256.hashToBytes(sha256)
-				: Buffer.from(sha256, "hex");
+			// Build OTS stamp — fromHash takes raw hash bytes, stamp() uses public calendars by default
+			const hashBytes = Buffer.from(sha256, "hex");
 
-			const detached = OpenTimestamps.DetachedTimestampFile.fromBytes(
+			const detached = OpenTimestamps.DetachedTimestampFile.fromHash(
 				new OpenTimestamps.Ops.OpSHA256(),
-				hash
+				hashBytes
 			);
 
-			await OpenTimestamps.stamp(detached, {
-				calendars: CALENDARS.map((url) => new OpenTimestamps.Calendar(url)),
-			});
+			await OpenTimestamps.stamp(detached);
 
 			const otsBytes: Uint8Array = detached.serializeToBytes();
 

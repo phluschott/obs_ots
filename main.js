@@ -76624,17 +76624,19 @@ var OtsPlugin = class extends import_obsidian.Plugin {
     await this.saveData(this.settings);
   }
   setFolderVisibility(hide) {
-    var _a, _b, _c;
+    var _a, _b;
     const config = this.app.vault.config;
-    let filters = (_a = config.userIgnoreFilters) != null ? _a : [];
+    let filters = Array.isArray(config.userIgnoreFilters) ? [...config.userIgnoreFilters] : [];
     if (hide) {
       if (!filters.includes(OTS_DIR))
-        filters = [...filters, OTS_DIR];
+        filters.push(OTS_DIR);
     } else {
       filters = filters.filter((f) => f !== OTS_DIR);
     }
     this.app.vault.setConfig("userIgnoreFilters", filters);
-    (_c = (_b = this.app.fileManager).initializeIgnoreFilters) == null ? void 0 : _c.call(_b);
+    for (const leaf of this.app.workspace.getLeavesOfType("file-explorer")) {
+      (_b = (_a = leaf.view).requestSort) == null ? void 0 : _b.call(_a);
+    }
   }
   isOtsPath(path) {
     return path.startsWith(OTS_DIR + "/");

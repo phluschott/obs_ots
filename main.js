@@ -76775,7 +76775,46 @@ var OtsSettingTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "OpenTimestamps Settings" });
+    containerEl.createEl("h2", { text: "OpenTimestamps" });
+    containerEl.createEl("p", {
+      text: "Prove the existence of your writing by anchoring it to the Bitcoin blockchain \u2014 no account, no central authority required."
+    });
+    containerEl.createEl("h3", { text: "How it works" });
+    const steps = containerEl.createEl("ol");
+    [
+      "Your note is hashed using SHA-256 (a fingerprint of its exact contents).",
+      "The hash is submitted to public OpenTimestamps calendar servers.",
+      "The servers bundle your hash into a Merkle tree anchored to a Bitcoin block.",
+      "A .ots proof file is saved in your vault \u2014 this is your evidence.",
+      "Anyone can independently verify the proof using the free OTS CLI tool."
+    ].forEach((s) => steps.createEl("li", { text: s }));
+    containerEl.createEl("h3", { text: "Usage" });
+    new import_obsidian.Setting(containerEl).setName("Timestamp a specific file").setDesc("Right-click any file in the file explorer or editor and choose: Get Timestamp (OTS).");
+    new import_obsidian.Setting(containerEl).setName("Auto-timestamp on create").setDesc("New files are automatically submitted to OTS calendars 3 seconds after creation.");
+    new import_obsidian.Setting(containerEl).setName("Bulk timestamp all files").setDesc('Open the command palette (Ctrl+P / Cmd+P) and run: "OpenTimestamps: Bulk timestamp all files".');
+    new import_obsidian.Setting(containerEl).setName("Upgrade pending proofs").setDesc('Run "OpenTimestamps: Upgrade pending OTS proofs" from the command palette to check for Bitcoin block confirmations.');
+    containerEl.createEl("h3", { text: "What gets stored in your vault" });
+    const pre = containerEl.createEl("pre");
+    pre.style.background = "var(--background-secondary)";
+    pre.style.padding = "10px";
+    pre.style.borderRadius = "6px";
+    pre.style.fontSize = "0.85em";
+    pre.createEl("code", {
+      text: "_ots/\n  README.md          \u2190 auto-generated timestamp log\n  timestamps.json    \u2190 machine-readable proof index\n  proofs/\n    My_Note.md.ots   \u2190 binary proof file per note"
+    });
+    containerEl.createEl("h3", { text: "Verify a proof independently" });
+    containerEl.createEl("p", {
+      text: "Anyone can verify your proof without this plugin using the official OTS CLI:"
+    });
+    const pre2 = containerEl.createEl("pre");
+    pre2.style.background = "var(--background-secondary)";
+    pre2.style.padding = "10px";
+    pre2.style.borderRadius = "6px";
+    pre2.style.fontSize = "0.85em";
+    pre2.createEl("code", {
+      text: "pip install opentimestamps-client\nots verify _ots/proofs/My_Note.md.ots"
+    });
+    containerEl.createEl("h3", { text: "Settings" });
     new import_obsidian.Setting(containerEl).setName("Proof storage folder").setDesc("Folder inside your vault where .ots proof files and the log are stored.").addText(
       (text) => text.setPlaceholder("_ots").setValue(OTS_DIR).setDisabled(true)
     );

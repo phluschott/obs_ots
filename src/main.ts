@@ -43,21 +43,25 @@ const DEFAULT_SETTINGS: OtsSettings = {};
 
 export default class OtsPlugin extends Plugin {
 	settings: OtsSettings;
+	private statusBarItem: HTMLElement;
 
 	async onload() {
 		await this.loadSettings();
 		this.ensureOtsDir();
 
 		// Status bar button
-		const statusBarItem = this.addStatusBarItem();
-		statusBarItem.setText("⏱ OTS");
-		statusBarItem.title = "Timestamp this file with OpenTimestamps";
-		statusBarItem.style.cursor = "pointer";
-		statusBarItem.addEventListener("click", () => {
+		this.statusBarItem = this.addStatusBarItem();
+		this.statusBarItem.title = "Click to timestamp the active file";
+		this.statusBarItem.style.cursor = "pointer";
+		this.statusBarItem.addEventListener("click", () => {
 			const file = this.app.workspace.getActiveFile();
 			if (file) this.timestampFile(file, true);
 			else new Notice("No active file to timestamp.");
 		});
+		await this.refreshStatusBar();
+
+		// Run a silent upgrade check on startup once the workspace is ready
+		this.app.workspace.onLayoutReady(() => this.startupUpgradeCheck());
 
 		// Right-click menu in file explorer
 		this.registerEvent(
@@ -122,6 +126,38 @@ export default class OtsPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	async refreshStatusBar() {
+		const index = await this.loadIndex();
+		const pending = index.entries.filter((e) => e.status !== "confirmed").length;
+		if (pending > 0) {
+			this.statusBarItem.setText(`⏱ OTS · ${pending} pending`);
+			this.statusBarItem.title = `${pending} proof(s) awaiting Bitcoin confirmation — click to timestamp active file`;
+		} else {
+			this.statusBarItem.setText("⏱ OTS");
+			this.statusBarItem.title = "Click to timestamp the active file";
+		}
+	}
+
+	private async startupUpgradeCheck() {
+		const index = await this.loadIndex();
+		const pendingCount = index.entries.filter((e) => e.status !== "confirmed").length;
+		if (pendingCount === 0) return;
+
+		const upgraded = await this.upgradeAllProofs(true);
+		const stillPending = pendingCount - upgraded;
+
+		if (upgraded > 0) {
+			new Notice(`✅ OTS: ${upgraded} proof${upgraded > 1 ? "s" : ""} confirmed on Bitcoin!`);
+		}
+		if (stillPending > 0) {
+			new Notice(
+				`⏳ OTS: ${stillPending} proof${stillPending > 1 ? "s are" : " is"} still pending Bitcoin confirmation. ` +
+				`Run "Upgrade pending OTS proofs" from the command palette to check again.`,
+				8000
+			);
+		}
+	}
+
 	private isOtsPath(path: string): boolean {
 		return path.startsWith(OTS_DIR + "/") || path === LOG_FILE;
 	}
@@ -184,6 +220,7 @@ export default class OtsPlugin extends Plugin {
 			};
 			await this.addIndexEntry(entry);
 			await this.regenerateLog();
+			await this.refreshStatusBar();
 
 			if (notify) new Notice(`✓ Timestamped: ${file.name} (pending Bitcoin anchor)`);
 			return true;
@@ -194,7 +231,7 @@ export default class OtsPlugin extends Plugin {
 		}
 	}
 
-	async upgradeAllProofs() {
+	async upgradeAllProofs(silent = false): Promise<number> {
 		const index = await this.loadIndex();
 		let upgraded = 0;
 
@@ -221,7 +258,9 @@ export default class OtsPlugin extends Plugin {
 
 		await this.saveIndex(index);
 		await this.regenerateLog();
-		new Notice(`Upgraded ${upgraded} proof(s) to confirmed.`);
+		await this.refreshStatusBar();
+		if (!silent) new Notice(`Upgraded ${upgraded} proof(s) to confirmed.`);
+		return upgraded;
 	}
 
 	private async loadIndex(): Promise<OtsIndex> {

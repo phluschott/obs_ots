@@ -76564,18 +76564,23 @@ var OtsPlugin = class extends import_obsidian.Plugin {
     await this.loadSettings();
     this.ensureOtsDir();
     this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.setText("\u270D Sign This File");
+    this.statusBarItem.title = "Timestamp the active file with OpenTimestamps";
     this.statusBarItem.style.cursor = "pointer";
-    this.statusBarItem.addEventListener("click", async () => {
-      const index = await this.loadIndex();
-      const pending = index.entries.filter((e) => e.status !== "confirmed").length;
-      if (pending > 0) {
-        this.upgradeAllProofs();
-      } else {
-        const file = this.app.workspace.getActiveFile();
-        if (file)
-          this.timestampFile(file, true);
-        else
-          new import_obsidian.Notice("No active file to timestamp.");
+    this.statusBarItem.addEventListener("click", () => {
+      const file = this.app.workspace.getActiveFile();
+      if (file)
+        this.timestampFile(file, true);
+      else
+        new import_obsidian.Notice("No active file to timestamp.");
+    });
+    this.updateBarItem = this.addStatusBarItem();
+    updateBarItem.style.cursor = "pointer";
+    updateBarItem.addEventListener("click", async () => {
+      await this.upgradeAllProofs();
+      const log = this.app.vault.getAbstractFileByPath(LOG_FILE);
+      if (log instanceof import_obsidian.TFile) {
+        await this.app.workspace.getLeaf().openFile(log);
       }
     });
     await this.refreshStatusBar();
@@ -76632,11 +76637,11 @@ var OtsPlugin = class extends import_obsidian.Plugin {
     const index = await this.loadIndex();
     const pending = index.entries.filter((e) => e.status !== "confirmed").length;
     if (pending > 0) {
-      this.statusBarItem.setText(`\u23F1 OTS \xB7 ${pending} pending`);
-      this.statusBarItem.title = `Click to check for Bitcoin confirmations (${pending} pending)`;
+      this.updateBarItem.setText(`\u{1F504} Update Timestamp Log \xB7 ${pending} pending`);
+      this.updateBarItem.title = `Check for Bitcoin confirmations (${pending} proofs pending)`;
     } else {
-      this.statusBarItem.setText("\u23F1 OTS");
-      this.statusBarItem.title = "Click to timestamp the active file";
+      this.updateBarItem.setText("\u{1F504} Update Timestamp Log");
+      this.updateBarItem.title = "Check for Bitcoin confirmations and open the OTS Log";
     }
   }
   async startupUpgradeCheck() {

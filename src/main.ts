@@ -17,9 +17,9 @@ import * as OpenTimestamps from "javascript-opentimestamps";
 
 const OTS_DIR = ".ots";
 const PROOFS_DIR = `${OTS_DIR}/proofs`;
+const SNAPSHOTS_DIR = `${OTS_DIR}/snapshots`;
 const INDEX_FILE = `${OTS_DIR}/timestamps.json`;
 const LOG_FILE = "OTS Log.md";
-
 
 interface TimestampEntry {
 	file: string;
@@ -28,6 +28,7 @@ interface TimestampEntry {
 	status: "pending" | "confirmed";
 	bitcoinBlock?: number;
 	proofFile: string;
+	snapshotFile: string;
 }
 
 interface OtsIndex {
@@ -35,12 +36,10 @@ interface OtsIndex {
 }
 
 interface OtsSettings {
-	autoTimestampDelay: number; // seconds
+	// reserved for future settings
 }
 
-const DEFAULT_SETTINGS: OtsSettings = {
-	autoTimestampDelay: 120,
-};
+const DEFAULT_SETTINGS: OtsSettings = {};
 
 export default class OtsPlugin extends Plugin {
 	settings: OtsSettings;
@@ -49,14 +48,16 @@ export default class OtsPlugin extends Plugin {
 		await this.loadSettings();
 		this.ensureOtsDir();
 
-		// Auto-timestamp on file create
-		this.registerEvent(
-			this.app.vault.on("create", (file: TAbstractFile) => {
-				if (!(file instanceof TFile)) return;
-				if (this.isOtsPath(file.path)) return;
-				setTimeout(() => this.timestampFile(file, false), this.settings.autoTimestampDelay * 1000);
-			})
-		);
+		// Status bar button
+		const statusBarItem = this.addStatusBarItem();
+		statusBarItem.setText("⏱ OTS");
+		statusBarItem.title = "Timestamp this file with OpenTimestamps";
+		statusBarItem.style.cursor = "pointer";
+		statusBarItem.addEventListener("click", () => {
+			const file = this.app.workspace.getActiveFile();
+			if (file) this.timestampFile(file, true);
+			else new Notice("No active file to timestamp.");
+		});
 
 		// Right-click menu in file explorer
 		this.registerEvent(
@@ -121,13 +122,13 @@ export default class OtsPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-private isOtsPath(path: string): boolean {
+	private isOtsPath(path: string): boolean {
 		return path.startsWith(OTS_DIR + "/") || path === LOG_FILE;
 	}
 
 	private async ensureOtsDir() {
 		const adapter = this.app.vault.adapter;
-		for (const dir of [OTS_DIR, PROOFS_DIR]) {
+		for (const dir of [OTS_DIR, PROOFS_DIR, SNAPSHOTS_DIR]) {
 			if (!(await adapter.exists(dir))) {
 				await adapter.mkdir(dir);
 			}
@@ -150,22 +151,27 @@ private isOtsPath(path: string): boolean {
 
 			if (notify) new Notice(`Submitting ${file.name} to OTS calendars…`);
 
-			// Build OTS stamp — fromHash takes raw hash bytes, stamp() uses public calendars by default
+			// Build OTS stamp
 			const hashBytes = Buffer.from(sha256, "hex");
-
 			const detached = OpenTimestamps.DetachedTimestampFile.fromHash(
 				new OpenTimestamps.Ops.OpSHA256(),
 				hashBytes
 			);
-
 			await OpenTimestamps.stamp(detached);
 
 			const otsBytes: Uint8Array = detached.serializeToBytes();
 
 			// Save proof file
 			const safeName = file.path.replace(/\//g, "_");
-			const proofPath = `${PROOFS_DIR}/${safeName}.ots`;
+			const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+			const proofPath = `${PROOFS_DIR}/${safeName}_${timestamp}.ots`;
 			await this.app.vault.adapter.writeBinary(proofPath, otsBytes.buffer);
+
+			// Save snapshot of the exact version that was stamped
+			const ext = file.extension ? `.${file.extension}` : "";
+			const baseName = file.basename;
+			const snapshotPath = `${SNAPSHOTS_DIR}/${baseName}_${timestamp}${ext}`;
+			await this.app.vault.adapter.writeBinary(snapshotPath, content);
 
 			// Update index
 			const entry: TimestampEntry = {
@@ -174,6 +180,7 @@ private isOtsPath(path: string): boolean {
 				submittedAt: new Date().toISOString(),
 				status: "pending",
 				proofFile: proofPath,
+				snapshotFile: snapshotPath,
 			};
 			await this.addIndexEntry(entry);
 			await this.regenerateLog();
@@ -232,10 +239,7 @@ private isOtsPath(path: string): boolean {
 
 	private async addIndexEntry(entry: TimestampEntry) {
 		const index = await this.loadIndex();
-		// Replace existing entry for same file if present
-		const idx = index.entries.findIndex((e) => e.file === entry.file);
-		if (idx >= 0) index.entries[idx] = entry;
-		else index.entries.unshift(entry);
+		index.entries.unshift(entry);
 		await this.saveIndex(index);
 	}
 
@@ -245,15 +249,6 @@ private isOtsPath(path: string): boolean {
 		const confirmed = index.entries.filter((e) => e.status === "confirmed");
 		const pending = index.entries.filter((e) => e.status !== "confirmed");
 
-		const allRows = index.entries
-			.map((e) => {
-				const status = e.status === "confirmed"
-					? `✅ [Block #${e.bitcoinBlock}](https://mempool.space/block-height/${e.bitcoinBlock})`
-					: "⏳ Pending";
-				return `| [[${e.file}]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} | ${status} |`;
-			})
-			.join("\n");
-
 		const verifiedSection = confirmed.length === 0
 			? ""
 			: `---
@@ -262,11 +257,11 @@ private isOtsPath(path: string): boolean {
 
 These files are permanently anchored to the Bitcoin blockchain. Click a block number to view the transaction on the public ledger.
 
-| File | SHA-256 (prefix) | Timestamped | Bitcoin Block |
-|------|-----------------|-------------|---------------|
+| File | Version snapshot | SHA-256 (prefix) | Timestamped | Bitcoin Block |
+|------|-----------------|-----------------|-------------|---------------|
 ${confirmed
 	.map((e) =>
-		`| [[${e.file}]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} | [Block #${e.bitcoinBlock}](https://mempool.space/block-height/${e.bitcoinBlock}) |`
+		`| [[${e.file}]] | [[${e.snapshotFile}\\|view snapshot]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} | [Block #${e.bitcoinBlock}](https://mempool.space/block-height/${e.bitcoinBlock}) |`
 	)
 	.join("\n")}
 
@@ -280,11 +275,11 @@ ${confirmed
 
 These files have been submitted but are not yet anchored to a Bitcoin block. Run **OpenTimestamps: Upgrade pending OTS proofs** from the command palette to check for updates.
 
-| File | SHA-256 (prefix) | Submitted |
-|------|-----------------|-----------|
+| File | Version snapshot | SHA-256 (prefix) | Submitted |
+|------|-----------------|-----------------|-----------|
 ${pending
 	.map((e) =>
-		`| [[${e.file}]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} |`
+		`| [[${e.file}]] | [[${e.snapshotFile}\\|view snapshot]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} |`
 	)
 	.join("\n")}
 
@@ -292,9 +287,9 @@ ${pending
 
 		const md = `# OpenTimestamps Log
 
-> Auto-generated by the OTS plugin. Do not edit manually. Proof files are stored in the hidden \`.ots/\` folder.
+> Auto-generated by the OTS plugin. Do not edit manually. Proof files and snapshots are stored in the hidden \`.ots/\` folder.
 >
-> **How long does verification take?** After submission, the OpenTimestamps servers batch your proof and anchor it to Bitcoin approximately once per hour. The Bitcoin network then mines that transaction into a block, which takes around 10 minutes on average. In practice, most proofs are confirmed within **2–6 hours**. In rare cases it can take up to 24 hours. This applies equally whether you stamped one file or hundreds — each file goes through the same pipeline. Run **OpenTimestamps: Upgrade pending OTS proofs** from the command palette to check for updates.
+> **How long does verification take?** After submission, the OpenTimestamps servers batch your proof and anchor it to Bitcoin approximately once per hour. The Bitcoin network then mines that transaction into a block, which takes around 10 minutes on average. In practice, most proofs are confirmed within **2–6 hours**. In rare cases it can take up to 24 hours. Run **OpenTimestamps: Upgrade pending OTS proofs** from the command palette to check for updates.
 
 **${confirmed.length} verified** · **${pending.length} pending**
 
@@ -302,13 +297,13 @@ ${verifiedSection}${pendingSection}---
 
 ## How to verify your proof
 
-Each \`.ots\` file in the \`proofs/\` folder is a cryptographic proof that your file existed at a specific point in time, anchored to the Bitcoin blockchain.
+Each \`.ots\` file in \`.ots/proofs/\` is a cryptographic proof that a specific version of your file existed at that point in time. The matching snapshot in \`.ots/snapshots/\` is the exact copy of the file that was stamped.
 
 ### Option 1 — Web (no install required)
 
 1. Go to **https://opentimestamps.org/**
-2. Drag and drop the \`.ots\` proof file from the \`proofs/\` folder onto the page
-3. The site will show whether the proof is pending or confirmed, and if confirmed, which Bitcoin block it was anchored to
+2. Drag and drop any \`.ots\` file from \`.ots/proofs/\` onto the page
+3. The site will confirm whether the proof is pending or anchored, and show the Bitcoin block number if confirmed
 
 ### Option 2 — Command line
 
@@ -321,13 +316,12 @@ ots verify .ots/proofs/<yourfile>.ots
 
 ## How verification proves existence
 
-When you timestamped a file, only its **SHA-256 hash** — a unique fingerprint of the file's exact contents — was submitted to the OpenTimestamps servers. Your actual file never left your computer.
+When you timestamped a file, the plugin saved two things: a \`.ots\` proof file and a snapshot of the exact version of your document at that moment. Together they prove:
 
-The servers bundled that hash into a Merkle tree (a tamper-proof chain of hashes) and recorded the root of that tree in a Bitcoin transaction. Once mined into a block, that record is permanent and immutable.
+1. **Your file's exact contents existed** — the SHA-256 hash in the proof matches the snapshot. If even a single character had changed, the hash would be completely different.
+2. **They existed before a specific Bitcoin block** — the Bitcoin blockchain is a public, immutable ledger. The block your proof is anchored to has a timestamp, and every block that came after it proves yours came first.
 
-When you verify later, the \`.ots\` proof file mathematically demonstrates that your file's hash was included in that Bitcoin block. Since Bitcoin blocks are timestamped and irreversible, this proves your file existed **before that block was mined** — without trusting any central authority.
-
-Anyone can repeat this verification independently using nothing but the \`.ots\` file, your original file, and the public Bitcoin blockchain.
+If a dispute ever arose, you could hand someone the snapshot and its \`.ots\` proof, and they could verify independently — using nothing but open-source tools and the public Bitcoin blockchain — that your file existed on that date. No lawyers, no notaries, no central authority needed.
 `;
 		await this.app.vault.adapter.write(LOG_FILE, md);
 	}
@@ -350,7 +344,7 @@ class BulkTimestampModal extends Modal {
 			.filter((f) => !f.path.startsWith(OTS_DIR + "/") && f.path !== LOG_FILE);
 
 		contentEl.createEl("p", {
-			text: `This will submit ${files.length} file(s) to OpenTimestamps calendars. Continue?`,
+			text: `This will submit ${files.length} file(s) to OpenTimestamps calendars and save a snapshot of each. Continue?`,
 		});
 
 		new Setting(contentEl)
@@ -405,20 +399,20 @@ class OtsSettingTab extends PluginSettingTab {
 			"Your note is hashed using SHA-256 (a fingerprint of its exact contents).",
 			"The hash is submitted to public OpenTimestamps calendar servers.",
 			"The servers bundle your hash into a Merkle tree anchored to a Bitcoin block.",
-			"A .ots proof file is saved in your vault — this is your evidence.",
-			"Anyone can independently verify the proof using the free OTS CLI tool.",
+			"A .ots proof file and a snapshot of your document are saved in the hidden .ots/ folder.",
+			"Anyone can independently verify the proof using the free OTS CLI tool or opentimestamps.org.",
 		].forEach((s) => steps.createEl("li", { text: s }));
 
 		// Usage
 		containerEl.createEl("h3", { text: "Usage" });
 
 		new Setting(containerEl)
-			.setName("Timestamp a specific file")
-			.setDesc("Right-click any file in the file explorer or editor and choose: Get Timestamp (OTS).");
+			.setName("Status bar button")
+			.setDesc('Click the "⏱ OTS" button in the bottom bar to timestamp the currently open file.');
 
 		new Setting(containerEl)
-			.setName("Auto-timestamp on create")
-			.setDesc("New files are automatically submitted to OTS calendars 3 seconds after creation.");
+			.setName("Timestamp a specific file")
+			.setDesc("Right-click any file in the file explorer or editor and choose: Get Timestamp (OTS).");
 
 		new Setting(containerEl)
 			.setName("Bulk timestamp all files")
@@ -437,11 +431,13 @@ class OtsSettingTab extends PluginSettingTab {
 		pre.style.fontSize = "0.85em";
 		pre.createEl("code", {
 			text:
-				"OTS Log.md         ← timestamp log (visible in your vault)\n" +
-				".ots/              ← hidden folder (not shown in sidebar)\n" +
-				"  timestamps.json  ← machine-readable proof index\n" +
+				"OTS Log.md            ← visible in Obsidian sidebar\n" +
+				".ots/                 ← hidden from sidebar, visible in OS file manager\n" +
+				"  timestamps.json     ← machine-readable proof index\n" +
 				"  proofs/\n" +
-				"    My_Note.md.ots ← binary proof file per note",
+				"    My_Note_<date>.ots     ← proof file per stamp\n" +
+				"  snapshots/\n" +
+				"    My_Note_<date>.md      ← exact copy of file at time of stamp",
 		});
 
 		// Verify
@@ -455,51 +451,7 @@ class OtsSettingTab extends PluginSettingTab {
 		pre2.style.borderRadius = "6px";
 		pre2.style.fontSize = "0.85em";
 		pre2.createEl("code", {
-			text: "pip install opentimestamps-client\nots verify _ots/proofs/My_Note.md.ots",
+			text: "pip install opentimestamps-client\nots verify .ots/proofs/My_Note_<date>.ots",
 		});
-
-		// Settings header
-		containerEl.createEl("h3", { text: "Settings" });
-
-		new Setting(containerEl)
-			.setName("Proof storage folder")
-			.setDesc("Folder inside your vault where .ots proof files and the log are stored.")
-			.addText((text) =>
-				text
-					.setPlaceholder("_ots")
-					.setValue(OTS_DIR)
-					.setDisabled(true)
-			);
-
-		new Setting(containerEl)
-			.setName("Auto-timestamp new files")
-			.setDesc("Automatically submit newly created files to OTS calendars.")
-			.addToggle((toggle) => toggle.setValue(true).setDisabled(true));
-
-		let delayLabel: HTMLSpanElement;
-		new Setting(containerEl)
-			.setName("Auto-timestamp delay")
-			.setDesc(
-				"How long to wait after a new file is created before submitting it. " +
-				"A longer delay avoids stamping files you create and immediately delete."
-			)
-			.addSlider((slider) => {
-				slider
-					.setLimits(60, 300, 30)
-					.setValue(this.plugin.settings.autoTimestampDelay)
-					.onChange(async (value) => {
-						this.plugin.settings.autoTimestampDelay = value;
-						await this.plugin.saveSettings();
-						delayLabel.setText(`${value}s`);
-					});
-				delayLabel = slider.sliderEl.insertAdjacentElement(
-					"afterend",
-					createSpan({ text: `${this.plugin.settings.autoTimestampDelay}s` })
-				) as HTMLSpanElement;
-				delayLabel.style.marginLeft = "10px";
-				delayLabel.style.minWidth = "36px";
-				delayLabel.style.display = "inline-block";
-			});
-
 	}
 }

@@ -1,0 +1,339 @@
+import {
+	App,
+	Editor,
+	Menu,
+	MenuItem,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TFile,
+	TAbstractFile,
+} from "obsidian";
+
+// @ts-ignore — no type definitions for this package
+import * as OpenTimestamps from "javascript-opentimestamps";
+
+const OTS_DIR = "_ots";
+const PROOFS_DIR = `${OTS_DIR}/proofs`;
+const INDEX_FILE = `${OTS_DIR}/timestamps.json`;
+const LOG_FILE = `${OTS_DIR}/README.md`;
+
+const CALENDARS = [
+	"https://alice.btc.calendar.opentimestamps.org",
+	"https://bob.btc.calendar.opentimestamps.org",
+	"https://finney.calendar.eternitywall.com",
+];
+
+interface TimestampEntry {
+	file: string;
+	sha256: string;
+	submittedAt: string;
+	status: "pending" | "confirmed";
+	bitcoinBlock?: number;
+	proofFile: string;
+}
+
+interface OtsIndex {
+	entries: TimestampEntry[];
+}
+
+export default class OtsPlugin extends Plugin {
+	private autoTimestampDelay = 3000;
+
+	async onload() {
+		this.ensureOtsDir();
+
+		// Auto-timestamp on file create
+		this.registerEvent(
+			this.app.vault.on("create", (file: TAbstractFile) => {
+				if (!(file instanceof TFile)) return;
+				if (this.isOtsPath(file.path)) return;
+				setTimeout(() => this.timestampFile(file, false), this.autoTimestampDelay);
+			})
+		);
+
+		// Right-click menu in file explorer
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu: Menu, file: TAbstractFile) => {
+				if (!(file instanceof TFile)) return;
+				menu.addItem((item: MenuItem) => {
+					item
+						.setTitle("Get Timestamp (OTS)")
+						.setIcon("clock")
+						.onClick(() => this.timestampFile(file, true));
+				});
+			})
+		);
+
+		// Right-click menu in editor
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu: Menu, _editor: Editor, _view: any) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file) return;
+				menu.addItem((item: MenuItem) => {
+					item
+						.setTitle("Get Timestamp (OTS)")
+						.setIcon("clock")
+						.onClick(() => this.timestampFile(file, true));
+				});
+			})
+		);
+
+		// Command: timestamp current file
+		this.addCommand({
+			id: "timestamp-current-file",
+			name: "Timestamp current file",
+			callback: () => {
+				const file = this.app.workspace.getActiveFile();
+				if (file) this.timestampFile(file, true);
+				else new Notice("No active file.");
+			},
+		});
+
+		// Command: bulk timestamp
+		this.addCommand({
+			id: "bulk-timestamp",
+			name: "Bulk timestamp all files",
+			callback: () => new BulkTimestampModal(this.app, this).open(),
+		});
+
+		// Command: upgrade/verify proofs
+		this.addCommand({
+			id: "upgrade-proofs",
+			name: "Upgrade pending OTS proofs",
+			callback: () => this.upgradeAllProofs(),
+		});
+
+		this.addSettingTab(new OtsSettingTab(this.app, this));
+	}
+
+	private isOtsPath(path: string): boolean {
+		return path.startsWith(OTS_DIR + "/");
+	}
+
+	private async ensureOtsDir() {
+		const adapter = this.app.vault.adapter;
+		for (const dir of [OTS_DIR, PROOFS_DIR]) {
+			if (!(await adapter.exists(dir))) {
+				await adapter.mkdir(dir);
+			}
+		}
+	}
+
+	async timestampFile(file: TFile, notify: boolean): Promise<boolean> {
+		await this.ensureOtsDir();
+
+		try {
+			// Read file bytes
+			const content = await this.app.vault.readBinary(file);
+			const bytes = new Uint8Array(content);
+
+			// SHA-256 via Web Crypto
+			const hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
+			const sha256 = Array.from(new Uint8Array(hashBuffer))
+				.map((b) => b.toString(16).padStart(2, "0"))
+				.join("");
+
+			if (notify) new Notice(`Submitting ${file.name} to OTS calendars…`);
+
+			// Build OTS stamp
+			const hash = OpenTimestamps.Ops.OpSHA256.hashToBytes
+				? OpenTimestamps.Ops.OpSHA256.hashToBytes(sha256)
+				: Buffer.from(sha256, "hex");
+
+			const detached = OpenTimestamps.DetachedTimestampFile.fromBytes(
+				new OpenTimestamps.Ops.OpSHA256(),
+				hash
+			);
+
+			await OpenTimestamps.stamp(detached, {
+				calendars: CALENDARS.map((url) => new OpenTimestamps.Calendar(url)),
+			});
+
+			const otsBytes: Uint8Array = detached.serializeToBytes();
+
+			// Save proof file
+			const safeName = file.path.replace(/\//g, "_");
+			const proofPath = `${PROOFS_DIR}/${safeName}.ots`;
+			await this.app.vault.adapter.writeBinary(proofPath, otsBytes.buffer);
+
+			// Update index
+			const entry: TimestampEntry = {
+				file: file.path,
+				sha256,
+				submittedAt: new Date().toISOString(),
+				status: "pending",
+				proofFile: proofPath,
+			};
+			await this.addIndexEntry(entry);
+			await this.regenerateLog();
+
+			if (notify) new Notice(`✓ Timestamped: ${file.name} (pending Bitcoin anchor)`);
+			return true;
+		} catch (err) {
+			console.error("OTS stamp error:", err);
+			if (notify) new Notice(`OTS error for ${file.name}: ${err}`);
+			return false;
+		}
+	}
+
+	async upgradeAllProofs() {
+		const index = await this.loadIndex();
+		let upgraded = 0;
+
+		for (const entry of index.entries) {
+			if (entry.status === "confirmed") continue;
+			try {
+				const data = await this.app.vault.adapter.readBinary(entry.proofFile);
+				const detached = OpenTimestamps.DetachedTimestampFile.deserialize(new Uint8Array(data));
+				await OpenTimestamps.upgrade(detached);
+
+				const info = OpenTimestamps.verifyTimestamp(detached.timestamp);
+				if (info && info.height) {
+					entry.status = "confirmed";
+					entry.bitcoinBlock = info.height;
+					upgraded++;
+				}
+
+				const updated: Uint8Array = detached.serializeToBytes();
+				await this.app.vault.adapter.writeBinary(entry.proofFile, updated.buffer);
+			} catch (_) {
+				// proof not yet anchored — skip silently
+			}
+		}
+
+		await this.saveIndex(index);
+		await this.regenerateLog();
+		new Notice(`Upgraded ${upgraded} proof(s) to confirmed.`);
+	}
+
+	private async loadIndex(): Promise<OtsIndex> {
+		try {
+			const raw = await this.app.vault.adapter.read(INDEX_FILE);
+			return JSON.parse(raw) as OtsIndex;
+		} catch {
+			return { entries: [] };
+		}
+	}
+
+	private async saveIndex(index: OtsIndex) {
+		await this.app.vault.adapter.write(INDEX_FILE, JSON.stringify(index, null, 2));
+	}
+
+	private async addIndexEntry(entry: TimestampEntry) {
+		const index = await this.loadIndex();
+		// Replace existing entry for same file if present
+		const idx = index.entries.findIndex((e) => e.file === entry.file);
+		if (idx >= 0) index.entries[idx] = entry;
+		else index.entries.unshift(entry);
+		await this.saveIndex(index);
+	}
+
+	private async regenerateLog() {
+		const index = await this.loadIndex();
+		const rows = index.entries
+			.map((e) => {
+				const status = e.status === "confirmed" ? `✅ Block #${e.bitcoinBlock}` : "⏳ Pending";
+				return `| [[${e.file}]] | \`${e.sha256.slice(0, 12)}…\` | ${e.submittedAt.slice(0, 10)} | ${status} |`;
+			})
+			.join("\n");
+
+		const md = `# OpenTimestamps Log
+
+> Auto-generated by the OTS plugin. Do not edit manually.
+
+| File | SHA-256 (prefix) | Submitted | Status |
+|------|-----------------|-----------|--------|
+${rows}
+
+## How to verify
+
+\`\`\`
+ots verify <prooffile>.ots
+\`\`\`
+
+Install the OTS CLI: \`pip install opentimestamps-client\`
+`;
+		await this.app.vault.adapter.write(LOG_FILE, md);
+	}
+}
+
+class BulkTimestampModal extends Modal {
+	plugin: OtsPlugin;
+
+	constructor(app: App, plugin: OtsPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h2", { text: "Bulk Timestamp Files" });
+
+		const files = this.app.vault
+			.getFiles()
+			.filter((f) => !f.path.startsWith(OTS_DIR + "/"));
+
+		contentEl.createEl("p", {
+			text: `This will submit ${files.length} file(s) to OpenTimestamps calendars. Continue?`,
+		});
+
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn
+					.setButtonText("Timestamp All")
+					.setCta()
+					.onClick(async () => {
+						this.close();
+						const notice = new Notice(`Timestamping 0 / ${files.length}…`, 0);
+						let done = 0;
+						for (const file of files) {
+							await this.plugin.timestampFile(file, false);
+							done++;
+							notice.setMessage(`Timestamping ${done} / ${files.length}…`);
+						}
+						notice.hide();
+						new Notice(`Done! Timestamped ${done} files.`);
+					})
+			)
+			.addButton((btn) =>
+				btn.setButtonText("Cancel").onClick(() => this.close())
+			);
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+class OtsSettingTab extends PluginSettingTab {
+	plugin: OtsPlugin;
+
+	constructor(app: App, plugin: OtsPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display() {
+		const { containerEl } = this;
+		containerEl.empty();
+		containerEl.createEl("h2", { text: "OpenTimestamps Settings" });
+
+		new Setting(containerEl)
+			.setName("Proof storage folder")
+			.setDesc("Folder inside your vault where .ots proof files and the log are stored.")
+			.addText((text) =>
+				text
+					.setPlaceholder("_ots")
+					.setValue(OTS_DIR)
+					.setDisabled(true)
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-timestamp new files")
+			.setDesc("Automatically submit newly created files to OTS calendars.")
+			.addToggle((toggle) => toggle.setValue(true).setDisabled(true));
+	}
+}
